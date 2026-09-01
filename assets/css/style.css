@@ -198,13 +198,6 @@ h1 {
 .page-links a:hover { border-bottom-color: var(--accent); }
 .page-links .sep { color: var(--muted); }
 
-.location {
-  margin-top: 40px;
-  font-family: var(--mono);
-  font-size: 0.95rem;
-  color: var(--muted);
-}
-
 /* ---------- 404 page ---------- */
 .error-page {
   align-items: center;
