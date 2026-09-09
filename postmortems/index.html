@@ -29,6 +29,16 @@
 
     <ul class="post-list">
       <li>
+        <a class="post-item" href="/postmortems/traefik-client-ip-blindspot/">
+          <span class="post-meta">
+            <span class="post-date">2026-09-09</span>
+            <span class="chip sev">SEV2</span>
+          </span>
+          <span class="post-title">Kubernetes' externalTrafficPolicy default corrupts every source IP</span>
+          <span class="post-summary">Migrating Nextcloud off a plain Docker instance exposed a two-month-old gap in Traefik: every source IP got replaced with the cluster's own pod-network address, and the resulting brute-force throttling took the pod out of readiness for real on its first night.</span>
+        </a>
+      </li>
+      <li>
         <a class="post-item" href="/postmortems/poe-port-frame-corruption/">
           <span class="post-meta">
             <span class="post-date">2026-07-20</span>
