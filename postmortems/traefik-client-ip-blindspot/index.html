@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Kubernetes' externalTrafficPolicy default corrupts every source IP | Tarek KHIDER</title>
+  <title>externalTrafficPolicy: Cluster corrupted source IPs | Tarek KHIDER</title>
   <meta name="description" content="Postmortem: migrating Nextcloud from a plain Docker instance to Kubernetes exposed a two-month-old gap in Traefik, every source IP got replaced with the cluster's own pod-network address, and the resulting brute-force throttling failed the pod's readiness probe on its first night." />
   <meta name="author" content="Tarek Khider" />
-  <meta property="og:title" content="Kubernetes' externalTrafficPolicy default corrupts every source IP" />
+  <meta property="og:title" content="externalTrafficPolicy: Cluster corrupted source IPs" />
   <meta property="og:description" content="A blameless postmortem from my self-hosted Kubernetes home lab." />
   <meta property="og:type" content="article" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>%E2%9C%A6</text></svg>" />
@@ -25,7 +25,7 @@
 
     <article>
       <header class="post-head">
-        <h1>Kubernetes' externalTrafficPolicy default corrupts every source IP</h1>
+        <h1>externalTrafficPolicy: Cluster corrupted source IPs</h1>
         <div class="meta-row">
           <span class="chip">2026-09-09</span>
           <span class="chip resolved">Resolved</span>
