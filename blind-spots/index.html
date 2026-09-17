@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Known blind spots | Tarek KHIDER</title>
-  <meta name="description" content="The deliberate weaknesses of the home lab serving this site: in-cluster monitoring, a single site and ISP, one NAS holding the cluster's state, and one hypervisor running everything." />
+  <meta name="description" content="The deliberate weaknesses of the home lab serving this site: in-cluster monitoring, a single site and ISP, one NAS holding the cluster's state, and one hypervisor running the cluster." />
   <meta name="author" content="Tarek Khider" />
   <meta property="og:title" content="Known blind spots | Tarek Khider" />
   <meta property="og:description" content="Every infrastructure has failure modes it chooses not to cover. These are mine, and why I accept them." />
@@ -61,25 +61,21 @@
           contributing factor in <a href="/postmortems/poe-port-frame-corruption/">another</a>.
           RAID1 covers a dead drive, not a dead power supply, a bad DSM update, or a
           controller bug. Nightly off-site backups to R2 cap the damage at restore
-          time plus the last day of data. This is largely a Kubernetes-specific risk,
-          not a whole-lab one: several services run as plain Docker containers
-          outside the cluster, with their own storage, independent of the NAS. Not
-          every one of them is fully independent, though: some still depend on the
-          NAS indirectly, through a database or shared storage that lives there, so a
-          NAS failure can reach outside the cluster too, not just through Kubernetes.
+          time plus the last day of data. The few containers that still run outside
+          the cluster (qBittorrent and the monitoring exporters) run on the NAS
+          itself, so a NAS failure takes those down with the cluster.
         </p>
 
-        <h2>One hypervisor for the whole lab</h2>
+        <h2>One hypervisor for the whole cluster</h2>
         <p>
-          The three Kubernetes node VMs, a separate Docker host running Nextcloud
-          and the DNS resolver behind two reverse proxies (one internet-facing, one
-          internal-only for admin tools), and the CI runner in its own LXC
-          container all live as guests on the same single Proxmox server.
+          The three Kubernetes node VMs all live on the same single Proxmox server.
           Kubernetes tolerates losing a node; it does not tolerate losing the
-          machine all three run on, and that failure is not contained to the
-          cluster: the same hypervisor going down takes every one of those other
-          guests with it too. A second server used to spread this risk, but I
-          retired it because the heat and noise at home outweighed the redundancy.
+          machine all three run on. The failure is not contained to the apps
+          either: the reverse proxy, the CI runner, and the DNS resolver the whole
+          LAN uses all run inside the cluster now, so losing the hypervisor also
+          takes name resolution down for every device at home. A second server
+          used to spread this risk, but I retired it because the heat and noise at
+          home outweighed the redundancy.
         </p>
 
         <h2>On-call is one person</h2>
@@ -91,10 +87,11 @@
 
         <h2>The deploy path assumes the lab is healthy</h2>
         <p>
-          Flux runs inside the cluster it reconciles, and the CI runner that drives
-          the Docker hosts is self-hosted in the lab. GitOps can ship a fix to a
-          degraded system, but not to a dead one. If the cluster or the runner host
-          is down, recovery starts with manual intervention, not a git push.
+          Flux runs inside the cluster it reconciles, and the self-hosted GitHub
+          Actions runner that applies Ansible and Terraform changes runs in that
+          same cluster. GitOps can ship a fix to a degraded system, but not to a
+          dead one. If the cluster is down, every deploy path is down with it, and
+          recovery starts with manual intervention, not a git push.
         </p>
 
         <h2>Why publish this</h2>
