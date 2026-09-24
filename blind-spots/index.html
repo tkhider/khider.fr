@@ -10,7 +10,7 @@
   <meta property="og:description" content="Every infrastructure has failure modes it chooses not to cover. These are mine, and why I accept them." />
   <meta property="og:type" content="website" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>%E2%9C%A6</text></svg>" />
-  <link rel="stylesheet" href="/assets/css/style.css?v=14" />
+  <link rel="stylesheet" href="/assets/css/style.css?v=15" />
 </head>
 <body>
   <main class="doc">
@@ -69,11 +69,10 @@
         <h2>One hypervisor for the whole cluster</h2>
         <p>
           The three Kubernetes node VMs all live on the same single Proxmox server.
-          Kubernetes tolerates losing a node; it does not tolerate losing the
-          machine all three run on. The failure is not contained to the apps
-          either: the reverse proxy, the CI runner, and the DNS resolver the whole
-          LAN uses all run inside the cluster now, so losing the hypervisor also
-          takes name resolution down for every device at home. A second server
+          Kubernetes can lose one node and keep going, but not the machine all
+          three run on. The reverse proxy, the CI runner, and the DNS resolver the
+          whole LAN uses all run inside the cluster now, so losing the hypervisor
+          also takes name resolution down for every device at home. A second server
           used to spread this risk, but I retired it because the heat and noise at
           home outweighed the redundancy.
         </p>
@@ -89,16 +88,14 @@
         <p>
           Flux runs inside the cluster it reconciles, and the self-hosted GitHub
           Actions runner that applies Ansible and Terraform changes runs in that
-          same cluster. GitOps can ship a fix to a degraded system, but not to a
-          dead one. If the cluster is down, every deploy path is down with it, and
-          recovery starts with manual intervention, not a git push.
+          same cluster. If the cluster is down, every deploy path is down with it,
+          and recovery has to start by hand.
         </p>
 
         <h2>Why publish this</h2>
         <p>
-          Every infrastructure has a list like this; most keep it implicit. Writing
-          it down forces me to decide whether each risk is accepted or just ignored.
-          The ones that stop being acceptable end up on the roadmap of
+          Writing these down makes me decide whether each risk is accepted or just
+          ignored. The ones that stop being acceptable end up on the roadmap of
           <a href="https://github.com/tkhider/homelab-infra" target="_blank" rel="noopener noreferrer">the repo</a>,
           and the ones that cause incidents end up in the
           <a href="/postmortems/">postmortems</a>.

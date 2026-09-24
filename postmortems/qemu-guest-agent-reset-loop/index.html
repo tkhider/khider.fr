@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>A disabled QEMU guest agent puts my Talos nodes in a reboot loop | Tarek KHIDER</title>
+  <meta name="description" content="Postmortem: a Talos node kept resetting every 70 minutes because it ran the QEMU guest agent while Proxmox had the agent turned off. Right after fixing it, I turned the agent off on every VM and created the same mismatch on the other two nodes." />
+  <meta name="author" content="Tarek Khider" />
+  <meta property="og:title" content="A disabled QEMU guest agent puts my Talos nodes in a reboot loop" />
+  <meta property="og:description" content="A blameless postmortem from my self-hosted Kubernetes home lab." />
+  <meta property="og:type" content="article" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>%E2%9C%A6</text></svg>" />
+  <link rel="stylesheet" href="/assets/css/style.css?v=15" />
+</head>
+<body>
+  <main class="doc">
+    <nav class="topnav">
+      <a class="back-link" href="/postmortems/">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m15 18-6-6 6-6"/>
+        </svg>
+        Postmortems
+      </a>
+    </nav>
+
+    <article>
+      <header class="post-head">
+        <h1>A disabled QEMU guest agent puts my Talos nodes in a reboot loop</h1>
+        <div class="meta-row">
+          <span class="chip">2026-09-22</span>
+          <span class="chip resolved">Resolved</span>
+          <span class="chip sev">SEV2</span>
+          <span class="chip tag">talos</span>
+          <span class="chip tag">proxmox</span>
+          <span class="chip tag">virtualization</span>
+        </div>
+      </header>
+
+      <div class="prose">
+        <p class="lead">
+          After a Talos upgrade, the node that runs Jellyfin started resetting
+          roughly every 70 minutes. The GPU driver looked like the cause but
+          wasn't. The node was running the QEMU guest agent while Proxmox had
+          the agent turned off for that VM. After fixing it, I turned the agent
+          off on every VM to keep things consistent, which created the same
+          mismatch on the other two nodes, including the only control plane.
+          No data loss.
+        </p>
+
+        <h2>Impact</h2>
+        <ul>
+          <li><strong>Down:</strong> Jellyfin dropped playback every time its node reset. Nextcloud also went down several times while the nodes were resetting.</li>
+          <li><strong>Degraded:</strong> once the problem reached the other nodes, the control plane reset about every 70 minutes for around 15 hours, 12 times in total.</li>
+          <li><strong>Data loss:</strong> none.</li>
+        </ul>
+
+        <h2>Background</h2>
+        <p>
+          My cluster is three Talos VMs on Proxmox. The QEMU guest agent is a small
+          program in the VM that lets Proxmox ask it things, like its IP or to shut
+          down cleanly. It only works if both sides agree. Proxmox has to enable the
+          agent on the VM, which adds a small communication channel, and Talos has
+          to include the guest agent extension in its image.
+        </p>
+
+        <h2>Timeline</h2>
+        <ul>
+          <li><strong>2026-09-22:</strong> I upgrade Talos to v1.14.1 and rebuild the node images from scratch on the Talos image factory. For the Jellyfin node, I add the guest agent extension because it sounds like a sensible thing to have on a VM. Proxmox never had the agent enabled on that VM.</li>
+          <li><strong>A bit over an hour later:</strong> the Jellyfin node resets, then keeps resetting about every 70 minutes. I suspect the Intel Arc GPU driver and force it back to the older driver. It still resets.</li>
+          <li><strong>Later that day:</strong> I test one change at a time. Same image, same settings, with and without the guest agent extension. With it, the node resets at about 70 minutes. Without it, it runs for over 2.5 hours with no issue. I drop the extension from that node.</li>
+          <li><strong>That evening:</strong> with the guest agent now looking like trouble, I turn it off in Proxmox on all three VMs. I forget that the other two nodes still have the extension in their Talos image.</li>
+          <li><strong>22:31 UTC:</strong> those two nodes still run the guest agent extension, but Proxmox no longer provides the channel. They start resetting every 70 minutes, same as the Jellyfin node.</li>
+          <li><strong>2026-09-23, 11:29 UTC:</strong> both nodes have reset 12 times each. The pattern matches the first incident exactly, so the cause is clear right away.</li>
+          <li><strong>2026-09-23, afternoon:</strong> I upgrade both nodes to an image without the extension. They both run past the 70 minute mark with no reset.</li>
+        </ul>
+
+        <h2>Trigger</h2>
+        <p>
+          The first time, the Talos v1.14.1 upgrade on the Jellyfin node added
+          the guest agent extension to a VM where Proxmox had the agent off. The
+          second time, turning the agent off in Proxmox on all three VMs left the
+          other two nodes running the extension with no channel to talk to.
+        </p>
+
+        <h2>Root cause</h2>
+        <p>
+          When the guest agent extension runs in a VM where Proxmox has the agent
+          turned off, it waits for a channel that never appears. After about 70
+          minutes, the VM resets itself. The Proxmox setting and the Talos image
+          have to match on every node, and nothing in the setup ties the two
+          together. The Proxmox side lives in Terraform, the Talos side lives in
+          images built by hand on the image factory, and changing one never
+          prompts a check of the other.
+        </p>
+
+        <h2>Contributing factors</h2>
+        <ul>
+          <li><strong>I didn't think a mismatch could crash a VM.</strong> The guest agent is an optional helper. If it had no channel to talk to, I expected it to fail quietly, maybe log an error, not take the whole node down. So it wasn't on my list of suspects at all until the tests pointed at it.</li>
+          <li><strong>The GPU was an easy suspect.</strong> The first node to break was the one with a passthrough GPU and a brand new driver. Switching the driver looked like a fix at first, but the one-change test showed it had nothing to do with the resets.</li>
+          <li><strong>Resets booted old images.</strong> After several Talos upgrades, the VM's boot entries were stale. An unplanned reset could boot an older image instead of the latest one, so I was never sure which version I was testing. Wiping the VM's boot settings before each test fixed that.</li>
+          <li><strong>Proxmox saw nothing wrong.</strong> These are resets inside the VM, so from Proxmox the VM looked up the whole time. The only reliable signal was <code>node_boot_time_seconds</code> in Prometheus.</li>
+          <li><strong>No alert on repeated reboots.</strong> Nothing fired when a node rebooted over and over. The first sign was apps going down.</li>
+        </ul>
+
+        <h2>Resolution</h2>
+        <ol>
+          <li>Removed the guest agent extension from all three Talos images. The agent is now off everywhere, on both sides.</li>
+          <li>Declared the agent as disabled in Terraform, so the code matches what is actually running.</li>
+        </ol>
+
+        <h2>What went well</h2>
+        <ul>
+          <li>Testing one change at a time gave a clear answer and ended the GPU driver guesswork.</li>
+          <li>Since the first incident was already understood, the second one took minutes to diagnose instead of most of a day.</li>
+        </ul>
+
+        <h2>What went wrong</h2>
+        <ul>
+          <li>The Talos images aren't in git, so the upgrade meant rebuilding them from scratch on the image factory, with no diff against what was running before.</li>
+          <li>The fix for the first incident changed the Proxmox side on all three VMs. With no single place showing both sides per node, it reproduced the same bug on the other two.</li>
+        </ul>
+
+        <h2>Follow-ups</h2>
+        <ul class="task-list">
+          <li class="done">Remove the guest agent extension from every Talos image.</li>
+          <li class="done">Declare the agent as disabled in Terraform.</li>
+          <li>Commit each node's Talos schematic YAML to the homelab repo and build images from it, so an upgrade is a diff instead of a rebuild.</li>        </ul>
+      </div>
+    </article>
+  </main>
+</body>
+</html>

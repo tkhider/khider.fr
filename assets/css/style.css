@@ -273,6 +273,7 @@ h1 {
 .post-item:hover { padding-left: 12px; }
 .post-item .post-meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   font-family: var(--mono);
@@ -332,6 +333,11 @@ h1 {
   color: var(--crit);
   background: color-mix(in srgb, var(--crit) 12%, transparent);
 }
+.chip.tag {
+  background: transparent;
+  border-style: dashed;
+}
+.chip.tag::before { content: "#"; opacity: 0.6; margin-right: -4px; }
 
 /* Prose */
 .prose { font-size: 1.02rem; }

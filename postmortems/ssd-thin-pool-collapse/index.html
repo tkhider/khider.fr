@@ -10,7 +10,7 @@
   <meta property="og:description" content="A blameless postmortem from my self-hosted Proxmox home lab." />
   <meta property="og:type" content="article" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>%E2%9C%A6</text></svg>" />
-  <link rel="stylesheet" href="/assets/css/style.css?v=14" />
+  <link rel="stylesheet" href="/assets/css/style.css?v=15" />
 </head>
 <body>
   <main class="doc">
@@ -30,13 +30,16 @@
           <span class="chip">2025-04-27</span>
           <span class="chip resolved">Resolved</span>
           <span class="chip sev">SEV1</span>
+          <span class="chip tag">storage</span>
+          <span class="chip tag">hardware</span>
+          <span class="chip tag">proxmox</span>
         </div>
       </header>
 
       <div class="prose">
         <p class="lead">
-          My Proxmox host kept all of its VM storage on a single spare 256GB SSD: ten
-          VMs on one consumer drive, no RAID, no backups. The drive started failing
+          My Proxmox host kept all of its VM storage on a single spare 256GB SSD. Ten
+          VMs sat on one consumer drive, with no RAID and no backups. The drive started failing
           writes, the LVM thin pool holding every VM disk went partial, and the entire
           lab was down for over 12 hours. I salvaged the files that mattered by
           mounting the QEMU disk images by hand. Some data was permanently lost;
@@ -50,14 +53,12 @@
           <li><strong>Data loss:</strong> yes, permanent. Most files were recovered from the disk images; what could not be recovered was not mission critical.</li>
         </ul>
 
-        <h2>Root cause</h2>
+        <h2>Trigger</h2>
         <p>
-          The <code>pve</code> volume group, including the thin pool <code>pve/data</code>
-          that backed every VM disk, lived on a single 256GB SSD with no redundancy.
-          Under load the drive began failing writes. Inside the guests the kernel logged
-          <code>I/O error, dev sda, op 0x1:(WRITE)</code> and long runs of
+          Under load, the SSD began failing writes. Inside the guests the kernel
+          logged <code>I/O error, dev sda, op 0x1:(WRITE)</code> and long runs of
           <code>Buffer I/O error on device sda1</code>. Every failing operation was a
-          write; reads were still served from cache, so services stayed partially
+          write. Reads were still served from cache, so services stayed partially
           responsive while nothing was actually being persisted.
         </p>
         <figure>
@@ -76,6 +77,20 @@
           <figcaption>LVM refusing to activate the partial LVs, including the thin pool pve/data itself.</figcaption>
         </figure>
 
+        <h2>Root cause</h2>
+        <p>
+          The <code>pve</code> volume group, including the thin pool <code>pve/data</code>
+          that backed every VM disk, lived on a single 256GB SSD with no redundancy.
+          When that one drive failed, every VM on the host lost its disk.
+        </p>
+
+        <h2>Contributing factors</h2>
+        <ul>
+          <li><strong>No disk-health alerting.</strong> The first signal was services misbehaving, not a warning about the drive.</li>
+          <li><strong>Reads still worked.</strong> Services served cached reads and looked half alive while no writes were being saved.</li>
+          <li><strong>LAN DNS lived on the same host.</strong> The outage took down name resolution for the whole network, not just the lab.</li>
+        </ul>
+
         <h2>Detection</h2>
         <p>
           There was no disk-health alerting, so the first signal was services
@@ -84,7 +99,7 @@
           with the same sectors failing repeatedly.
         </p>
         <p>
-          Rebooting did not help. The VM dropped to the initramfs shell:
+          Rebooting did not help. The VM dropped to the initramfs shell with
           <code>fsck exited with status code 4</code>,
           <code>UNEXPECTED INCONSISTENCY: RUN fsck MANUALLY</code>. A manual fsck
           repaired the inode counts and reported <code>FILE SYSTEM WAS MODIFIED</code>,
@@ -94,11 +109,11 @@
 
         <h2>Resolution</h2>
         <p>
-          The pool was gone as running storage, so recovery was file salvage, not repair:
+          The pool could no longer run as storage, so recovery meant salvaging files.
         </p>
         <ol>
           <li>Pulled the VM disk images off the dying drive and attached them read-only on a healthy machine.</li>
-          <li>Mounted the guest filesystems inside the images by hand and copied out what mattered: compose stacks, configs, application data.</li>
+          <li>Mounted the guest filesystems inside the images by hand and copied out the compose stacks, configs, and application data.</li>
           <li>Rebuilt the VMs from the cloud-init template and redeployed the services on fresh storage.</li>
         </ol>
         <p>
@@ -108,16 +123,15 @@
 
         <h2>What went well</h2>
         <ul>
-          <li>The guest kernel logs pointed straight at dying storage, not at software: every failure was a write.</li>
+          <li>The guest kernel logs pointed straight at dying storage. Every failure was a write.</li>
           <li>Mounting the QEMU images by hand recovered most of what mattered, even after LVM refused to activate anything.</li>
           <li>Nothing mission critical was lost.</li>
         </ul>
 
         <h2>What went wrong</h2>
         <ul>
-          <li>The host storage was a 256GB SSD I had laying around and decided to reuse for this host. That one device was a single point of failure for ten VMs.</li>
-          <li>No backups of any VM. Recovery meant forensics on a dying disk instead of a restore.</li>
-          <li>LAN DNS lived on the same failing host, so the outage affected the whole network, not just the lab.</li>
+          <li>The host was set up on a spare 256GB SSD with no plan for it failing. That one device was a single point of failure for ten VMs.</li>
+          <li>No backups of any VM. Recovery meant pulling files off a dying disk instead of a restore.</li>
         </ul>
 
         <h2>Follow-ups</h2>

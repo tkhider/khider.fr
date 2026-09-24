@@ -9,7 +9,11 @@
   </url>
   <url>
     <loc>https://khider.fr/postmortems/</loc>
-    <lastmod>2026-09-09</lastmod>
+    <lastmod>2026-09-24</lastmod>
+  </url>
+  <url>
+    <loc>https://khider.fr/postmortems/qemu-guest-agent-reset-loop/</loc>
+    <lastmod>2026-09-24</lastmod>
   </url>
   <url>
     <loc>https://khider.fr/postmortems/traefik-client-ip-blindspot/</loc>

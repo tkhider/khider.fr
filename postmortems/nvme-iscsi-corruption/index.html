@@ -10,7 +10,7 @@
   <meta property="og:description" content="A blameless postmortem from my self-hosted Kubernetes home lab." />
   <meta property="og:type" content="article" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>%E2%9C%A6</text></svg>" />
-  <link rel="stylesheet" href="/assets/css/style.css?v=14" />
+  <link rel="stylesheet" href="/assets/css/style.css?v=15" />
 </head>
 <body>
   <main class="doc">
@@ -30,6 +30,9 @@
           <span class="chip">2026-07-03</span>
           <span class="chip resolved">Resolved</span>
           <span class="chip sev">SEV1</span>
+          <span class="chip tag">storage</span>
+          <span class="chip tag">hardware</span>
+          <span class="chip tag">iscsi</span>
         </div>
       </header>
 
@@ -49,8 +52,16 @@
           <li><strong>Data loss:</strong> none. The databases replayed their own WAL once the filesystems came back.</li>
         </ul>
 
+        <h2>Trigger</h2>
+        <p>
+          The drive dropped out of the array. The RAID1 pool went Degraded and the
+          iSCSI sessions serving the LUNs were interrupted mid-write. XFS on those
+          LUNs was left with an unclean log, so the next mount failed with
+          <code>can't read superblock</code>.
+        </p>
+
         <h2>Root cause</h2>
-        <p>The failed drive (<code>nvme1n1</code>) did not wear out. SMART proved defective NAND:</p>
+        <p>The failed drive (<code>nvme1n1</code>) did not wear out. SMART showed defective NAND.</p>
         <ul>
           <li><code>available_spare</code>: 0% (below threshold)</li>
           <li><code>media_errors</code>: 2478</li>
@@ -58,16 +69,16 @@
           <li><code>critical_warning</code>: spare-below-threshold bit set</li>
         </ul>
         <p>
-          So this was a hardware defect, not write-wear. My earlier suspicion that the
-          monitoring stack drove the SSD to death through write volume was wrong: the
-          surviving drive (Samsung 970 EVO Plus 1TB) reports 0% used and 0 errors.
+          This was a hardware defect, not write wear. I had suspected the monitoring
+          stack of wearing the SSD out with its write volume, but the surviving drive
+          (Samsung 970 EVO Plus 1TB) reports 0% used and 0 errors.
         </p>
-        <p>
-          When the drive dropped out, the RAID1 pool went Degraded and the iSCSI target
-          sessions serving the LUNs were interrupted mid-write. XFS on those LUNs was
-          left with an unclean log, so the next mount failed with
-          <code>can't read superblock</code>.
-        </p>
+
+        <h2>Contributing factors</h2>
+        <ul>
+          <li><strong>No SMART alerting.</strong> The drive was failing silently. I only learned the spare was at 0% by SSHing into the NAS after the outage.</li>
+          <li><strong>Single-session iSCSI targets.</strong> A phantom session held the Prometheus target open and blocked the node from logging back in, which added a step before that volume could be repaired.</li>
+        </ul>
 
         <h2>Detection</h2>
         <p>
@@ -89,7 +100,7 @@
           <li>Verified with a read-only test mount before releasing the volume.</li>
         </ol>
         <p>
-          Prometheus needed one extra step: a phantom Synology iSCSI session held the
+          Prometheus needed one extra step. A phantom Synology iSCSI session held the
           single-session target open and blocked login (error 19). Toggling the target
           Disable/Enable in SAN Manager cleared it, then the XFS repair proceeded. After
           repair, all pods returned to Running and the databases recovered their WAL.
@@ -103,16 +114,13 @@
 
         <h2>What went wrong</h2>
         <ul>
-          <li>Single points of failure in the recovery path: single-session iSCSI targets produced a phantom session that blocked reconnect.</li>
-          <li>No SMART alerting. The drive was failing silently; I only learned the spare was at 0% by SSHing in after the outage.</li>
-          <li>No off-array backups of the Postgres data. Recovery depended entirely on the surviving RAID1 member.</li>
-        </ul>
+          <li>No off-array backups of the Postgres data. Recovery depended entirely on the surviving RAID1 member.</li>        </ul>
 
         <h2>Follow-ups</h2>
         <ul class="task-list">
           <li class="done">Replace the failed NVMe and rebuild the mirror.</li>
           <li class="done">Add SMART alerting (<code>available_spare</code>, <code>media_errors</code>, <code>critical_warning</code>) into the monitoring stack.</li>
-          <li class="done">Off-site backups for authentik and the arr apps: Velero takes daily CSI snapshots and moves the volume data to Cloudflare R2, fully off the NVMe pool and off the NAS.</li>
+          <li class="done">Off-site backups for authentik and the arr apps. Velero takes daily CSI snapshots and moves the volume data to Cloudflare R2, off the NVMe pool and off the NAS.</li>
           <li class="done">Reclaim thin-provisioned space with <code>fstrim</code> once the pool is healthy, and add <code>discard</code> to the storage class so reclamation stays automatic.</li>
         </ul>
       </div>
