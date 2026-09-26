@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>externalTrafficPolicy: Cluster corrupted source IPs | Tarek KHIDER</title>
+  <title>externalTrafficPolicy: Cluster rewrote every source IP | Tarek KHIDER</title>
   <meta name="description" content="Postmortem: migrating Nextcloud from a plain Docker instance to Kubernetes exposed a two-month-old gap in Traefik. Every source IP got replaced with the cluster's own pod-network address, and the resulting brute-force throttling failed the pod's readiness probe on its first night." />
   <meta name="author" content="Tarek Khider" />
-  <meta property="og:title" content="externalTrafficPolicy: Cluster corrupted source IPs" />
+  <meta property="og:title" content="externalTrafficPolicy: Cluster rewrote every source IP" />
   <meta property="og:description" content="A blameless postmortem from my self-hosted Kubernetes home lab." />
   <meta property="og:type" content="article" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>%E2%9C%A6</text></svg>" />
@@ -25,7 +25,7 @@
 
     <article>
       <header class="post-head">
-        <h1>externalTrafficPolicy: Cluster corrupted source IPs</h1>
+        <h1>externalTrafficPolicy: Cluster rewrote every source IP</h1>
         <div class="meta-row">
           <span class="chip">2026-09-09</span>
           <span class="chip resolved">Resolved</span>
@@ -42,9 +42,9 @@
           cluster. That same night, its pod failed its readiness probe and dropped
           out of the Service for about twenty minutes, and Nextcloud started warning
           that a single address, <code>10.244.0.0</code>, was being brute-force
-          throttled. Both came from two defaults, one in Traefik and one in
-          Kubernetes, that had been erasing every source IP since Traefik was first
-          set up, two months before Nextcloud was deployed here. No data loss.
+          throttled. Both came from defaults in Kubernetes and Traefik that had
+          been replacing every source IP since Traefik was first set up, two months
+          before Nextcloud was deployed here. No data loss.
         </p>
 
         <h2>Impact</h2>
@@ -69,29 +69,32 @@
 
         <h2>Root cause</h2>
         <p>
-          <code>10.244.0.0</code> is the network address of the pod subnet
-          Kubernetes hands out on whichever node the Nextcloud pod lands on. It
-          showed up because two defaults combined to erase the real client IP
-          before it reached the app.
+          <code>10.244.0.0</code> is the Flannel address of the node that received
+          the traffic. Requests reach Nextcloud through Cloudflare, then Traefik.
+          Cloudflare adds the visitor's IP to <code>X-Forwarded-For</code>, and
+          Nextcloud's Apache reads the client address from the
+          <code>X-Real-IP</code> header set by Traefik, which it trusts as a proxy
+          because it sits in <code>10.0.0.0/8</code>. The visitor's IP was lost at
+          two points on the way.
         </p>
         <ol>
           <li>
-            <strong>Traefik never forwarded a client-IP header to backends at all.</strong>
-            Without <code>forwardedHeaders</code> configured, Traefik does not
-            populate <code>X-Forwarded-For</code> or <code>X-Real-Ip</code> for
-            anything behind it. Nextcloud had nothing to read the real address
-            from, so it fell back to whatever raw address happened to be
-            connecting to it, which is how a pod-network address ended up in the
-            log in the first place.
+            <strong>Traefik never saw the real peer.</strong>
+            Its Service, the LoadBalancer that exposes it to the outside, had the
+            default <code>externalTrafficPolicy: Cluster</code>. That setting lets
+            any node accept incoming traffic and forward it to the Traefik pod,
+            and kube-proxy rewrites the source address to the node's own address
+            so the reply comes back the same way. Every connection reached Traefik
+            from <code>10.244.0.0</code> instead of from a Cloudflare address.
           </li>
           <li>
-            <strong>Traefik itself never saw the real client either.</strong>
-            Its own Service, the LoadBalancer that exposes it to the outside, had
-            the default <code>externalTrafficPolicy: Cluster</code>. That setting
-            lets any node handle incoming traffic and rewrites the source address
-            along the way to keep the return path working, so even after
-            forwarding was turned on, Traefik still had the wrong address to
-            forward.
+            <strong>Traefik discarded Cloudflare's headers.</strong>
+            Traefik only keeps an incoming <code>X-Forwarded-For</code> when the
+            peer is listed in <code>forwardedHeaders.trustedIPs</code>. Nothing was
+            listed, so it dropped the header Cloudflare had set and wrote its own
+            <code>X-Forwarded-For</code> and <code>X-Real-Ip</code> from the peer
+            address, <code>10.244.0.0</code>. Nextcloud read that header and
+            recorded every visitor under the same address.
           </li>
         </ol>
         <p>
@@ -129,28 +132,24 @@
         <p>
           That ruled out Nextcloud's own Service. Both tests used the same network
           path a real request takes, and both came through clean. They were manual
-          requests run from a shell inside the Traefik pod, so they didn't go
-          through Traefik's reverse-proxy code. The difference had to be in what
-          Traefik does when it proxies a request.
+          requests run from a shell inside the Traefik pod, so they carried no
+          forwarding headers, and Nextcloud logged the address that connected to
+          it: Traefik's pod IP.
         </p>
         <p>
-          A packet capture of a real Traefik-proxied request showed what Traefik
-          was sending to Nextcloud. There was a <code>Host</code> header and
-          nothing identifying the client, no <code>X-Forwarded-For</code> and no
-          <code>X-Real-Ip</code>.
-        </p>
-        <div class="term"><span class="muted">Host: cloud.khider.fr
-Host: cloud.khider.fr
-Host: cloud.khider.fr
-Host: cloud.khider.fr</span></div>
-        <p>
-          Traefik was never sending the client's address to Nextcloud.
+          Real requests also arrive from Traefik's pod IP, yet they were logged as
+          <code>10.244.0.0</code>. Apache only replaces the connecting address when
+          a trusted proxy sends <code>X-Real-IP</code>, so that address had to be
+          coming from the header Traefik set. Traefik fills that header from the
+          peer it sees, which pointed the investigation at what was happening in
+          front of Traefik rather than behind it.
         </p>
 
         <h2>Resolution</h2>
         <ol>
-          <li>Configured <code>forwardedHeaders.trustedIPs</code> on Traefik's web and websecure entrypoints so it actually forwards a client-IP header to backends.</li>
-          <li>Set <code>externalTrafficPolicy: Local</code> on the Traefik Service so it stops masquerading incoming traffic and Traefik gets handed the real client address to forward in the first place.</li>
+          <li>Set <code>externalTrafficPolicy: Local</code> on the Traefik Service so kube-proxy stops rewriting the source address and Traefik sees the real peer.</li>
+          <li>Listed Cloudflare's published ranges and the LAN in <code>forwardedHeaders.trustedIPs</code> on the web and websecure entrypoints, so Traefik keeps the <code>X-Forwarded-For</code> header Cloudflare sets instead of replacing it.</li>
+          <li>Pointed Nextcloud's Apache <code>RemoteIPHeader</code> at <code>Cf-Connecting-Ip</code>. With the first two fixes, Traefik's <code>X-Real-Ip</code> still held the Cloudflare edge address, while Cloudflare always puts the visitor's IP in <code>Cf-Connecting-Ip</code>.</li>
         </ol>
         <p>
           Each step was applied directly to the running cluster and checked against
@@ -159,7 +158,7 @@ Host: cloud.khider.fr</span></div>
 
         <h2>What went well</h2>
         <ul>
-          <li>Ruling out both pod-to-pod paths narrowed it down to Traefik's proxy behavior, and a packet capture confirmed it before any fix was tried.</li>
+          <li>Ruling out both pod-to-pod paths showed the address was coming from a header, which narrowed the search to the path in front of Traefik before any fix was tried.</li>
         </ul>
 
         <h2>What went wrong</h2>
@@ -169,8 +168,9 @@ Host: cloud.khider.fr</span></div>
 
         <h2>Follow-ups</h2>
         <ul class="task-list">
-          <li class="done">Configure <code>forwardedHeaders.trustedIPs</code> on Traefik.</li>
           <li class="done">Set <code>externalTrafficPolicy: Local</code> on the Traefik Service.</li>
+          <li class="done">Configure <code>forwardedHeaders.trustedIPs</code> on Traefik.</li>
+          <li class="done">Read the client IP from <code>Cf-Connecting-Ip</code> in Nextcloud's Apache.</li>
         </ul>
       </div>
     </article>
